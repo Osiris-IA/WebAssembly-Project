@@ -1,0 +1,50 @@
+services:
+  php:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /var/www/html
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      DSN: mysql:host=database;port=3306;dbname=app;
+      DB_USER: root
+      DB_PASSWORD: password
+    depends_on:
+      - database
+    ports:
+      - 8080:80
+
+  database:
+    image: mysql:alpine
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=app
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=password
+    volumes:
+      - db-data:/var/dump.sql
+
+volumes:
+  db-data: {}
+
+  # Service AssemblyScript (S1-S2)
+  wasm-as:
+    # Au lieu d'une image, on indique comment construire
+    build:
+      context: .
+      dockerfile: Dockerfile.as
+    volumes:
+      - ./:/app
+    ports:
+      - "8080:8080"
+    # Plus besoin de 'command' ici, le Dockerfile s'en charge !
+
+  # Service C++ (S3-S8) - Inchangé
+  wasm-cpp:
+    image: emscripten/emsdk:3.1.51
+    working_dir: /app
+    platform: linux/amd64
+    volumes:
+      - ./:/app
+    command: tail -f /dev/null
