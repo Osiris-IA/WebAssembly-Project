@@ -24,7 +24,7 @@ $password_verifie = password_verify($password, $password_hash_db);
 
 try {
     $db = new PDO($dsn, $username, $password);
-    $stmt = $db->prepare('SELECT * FROM user WHERE id = :id');
+        $stmt = $db->prepare('SELECT * FROM user WHERE id = :id');
 } catch (Exception $e) {
     echo "DB ERROR: " . $e->getMessage();
     die;

@@ -1,11 +1,3 @@
--- Users : id, pseudo, email, password (haché !).
-
--- Images : id, user_id, chemin_fichier (l'originale), date_upload.
-
--- Retouches : id, image_id, type_filtre (ex: "sepia"), valeur (ex: 0.5), ordre_execution.
-
--- Albums & Partages : Pour gérer les permissions privées/publiques.
-
 -- Conseil de prof : Pour le "Feed" avec requête complexe, tu devras utiliser des JOIN entre Images et Albums pour vérifier si l'utilisateur connecté a le droit de voir l'image.
 
 
@@ -19,7 +11,7 @@
 -- Pagination / Lazy Loading (2 pts) : Le backend doit exposer les données du Feed par lots (ex: LIMIT 10 OFFSET 0) via des paramètres d'URL pour ne pas saturer le navigateur.
 
 
-CREATE TABLE Users (
+CREATE TABLE IF NOT EXISTS Users (
     id int PRIMARY KEY AUTO_INCREMENT,
     pseudo varchar(255) NOT NULL UNIQUE,
     email varchar(255) NOT NULL UNIQUE,
@@ -28,27 +20,28 @@ CREATE TABLE Users (
 
 );
 
-CREATE TABLE Albums (
+CREATE TABLE IF NOT EXISTS Albums (
     id int PRIMARY KEY AUTO_INCREMENT,
     user_id int NOT NULL, -- propriétaire de l'album - lien vers Users
     nom varchar(255) NOT NULL,
-    is_public BOOLEAN NOT NULL DEFAULT FALSE, -- visibilité - privé/public
+    visibilite ENUM('prive', 'public', 'partage') NOT NULL DEFAULT 'prive',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES Users(id) -- clé étrangère : lien vers Users(id)
 );
 
-CREATE TABLE Images (
+CREATE TABLE IF NOT EXISTS Images (
     id int AUTO_INCREMENT PRIMARY KEY,
     album_id int NOT NULL, -- lien vers Albums(id) pour gérer les permissions
     user_id int NOT NULL, -- lien vers Users(id) pour savoir qui a uploadé l'image
     chemin_fichier varchar(255) NOT NULL, 
+    recette JSON NULL, -- stocke l'historique des retouches sous forme de JSON
     date_upload DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (album_id) REFERENCES Albums(id),
     FOREIGN KEY (user_id) REFERENCES Users(id)
 );
 
 -- table de jointure
-CREATE TABLE Album_shares (
+CREATE TABLE IF NOT EXISTS Album_shares (
     album_id int NOT NULL, -- id de l'album partagé - lien vers Albums
     user_id int NOT NULL, -- utilisateur avec qui on partage - lien vers Users
     can_edit BOOLEAN NOT NULL DEFAULT FALSE, -- permission d'édition pour les albums partagés
@@ -57,6 +50,21 @@ CREATE TABLE Album_shares (
     FOREIGN KEY (album_id) REFERENCES Albums(id), -- clé étrangère : lien vers Albums(id)
     FOREIGN KEY (user_id) REFERENCES Users(id)
 );
+
+INSERT INTO Users (pseudo, email, password_hash) VALUES ('alice', 'alice@example.com', 'hashed_password');
+INSERT INTO Users (pseudo, email, password_hash) VALUES ('bob','bob@example.com', 'hashed_password');
+
+INSERT INTO Albums (user_id, nom, visibilite) VALUES (1, 'Vacances', 'public');
+INSERT INTO Albums (user_id, nom, visibilite) VALUES (2, 'Famille', 'prive');
+
+INSERT INTO Images (album_id, user_id, chemin_fichier) VALUES (1, 1, '/images/vacances/photo1.jpg');
+INSERT INTO Images (album_id, user_id, chemin_fichier) VALUES (2, 2, '/images/famille/photo2.jpg');
+
+INSERT INTO Album_shares (album_id, user_id, can_edit) VALUES (2, 1, FALSE); -- Alice peut voir l'album privé de Bob
+INSERT INTO Album_shares (album_id, user_id, can_edit) VALUES (1, 2, TRUE); -- Bob peut voir et éditer l'album public d'Alice
+
+-- INSERT INTO : pour ajouter des données d'exemple dans les tables (Users, Albums, Images, Album_shares).
+
 
 
 CREATE TABLE historique_Retouches (
@@ -71,30 +79,42 @@ CREATE TABLE historique_Retouches (
 );
 
 
-
-SELECT a.*
-FROM Albums a
-LEFT JOIN Album_shares s
-  ON s.album_id = a.id AND s.user_id = :current_user_id
-WHERE a.id = :album_id
-  AND (
-    a.user_id = :current_user_id
-    OR a.is_public = TRUE
-    OR s.user_id IS NOT NULL
-  );
--- Cette requête SQL vérifie si l'utilisateur connecté a le droit de voir un album spécifique en fonction de sa propriété, de sa visibilité et des partages. Remplacez :current_user_id et :album_id par les valeurs appropriées lors de l'exécution de la requête.
-
 SELECT i.*
 FROM Images i
-JOIN Albums a ON i.album_id = a.id -- pour savoir si l’image est publique 
-LEFT JOIN Album_shares s -- pour savoir si elle est partagée
+JOIN Albums a ON i.album_id = a.id
+LEFT JOIN Album_shares s
     ON s.album_id = a.id AND s.user_id = :user_id
-
-WHERE -- filtre ce que tu peux voir
-    i.user_id = :user_id
-    OR a.is_public = TRUE
+WHERE
+    a.visibilite = 'public'
+    OR a.user_id = :user_id
     OR s.user_id IS NOT NULL
-
-ORDER BY i.date_upload DESC;
-
+ORDER BY i.date_upload DESC
 LIMIT 10 OFFSET 0;
+
+
+-- SELECT a.*
+-- FROM Albums a
+-- LEFT JOIN Album_shares s
+--   ON s.album_id = a.id AND s.user_id = :current_user_id
+-- WHERE a.id = :album_id
+--   AND (
+--     a.user_id = :current_user_id
+--     OR a.is_public = TRUE
+--     OR s.user_id IS NOT NULL
+--   );
+-- -- Cette requête SQL vérifie si l'utilisateur connecté a le droit de voir un album spécifique en fonction de sa propriété, de sa visibilité et des partages. Remplacez :current_user_id et :album_id par les valeurs appropriées lors de l'exécution de la requête.
+
+-- SELECT i.*
+-- FROM Images i
+-- JOIN Albums a ON i.album_id = a.id -- pour savoir si l’image est publique 
+-- LEFT JOIN Album_shares s -- pour savoir si elle est partagée
+--     ON s.album_id = a.id AND s.user_id = :user_id
+
+-- WHERE -- filtre ce que tu peux voir
+--     i.user_id = :user_id
+--     OR a.is_public = TRUE
+--     OR s.user_id IS NOT NULL
+
+-- ORDER BY i.date_upload DESC;
+
+-- LIMIT 10 OFFSET 0;
