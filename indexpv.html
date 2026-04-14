@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+    <script type="module" defer>
+      const { instance } = await WebAssembly.instantiateStreaming(fetch("build/add.wasm"));
+      const { instance: instancePower } = await WebAssembly.instantiateStreaming(fetch("build/power.wasm"));
+
+      const { instance: instanceIsPremier } = await WebAssembly.instantiateStreaming(fetch("build/is_premier.wasm"));
+
+      const { instance: instanceFibo } = await WebAssembly.instantiateStreaming(fetch("build/fibo.wasm"));
+
+      const memoryCesar = new WebAssembly.Memory({
+        initial: 1,
+      });
+      const { instance: instanceCesar } = await WebAssembly.instantiateStreaming(fetch("build/cesar.wasm"), {
+        env: {
+          memory: memoryCesar,
+        },
+      });
+
+      const canvas = document.getElementById("canvas_pixels_as");
+      const ctx = canvas.getContext("2d");
+      let width = canvas.width;
+      let height = canvas.height;
+      const memoryPixels = new WebAssembly.Memory({
+        initial: 256,
+        maximum: 256,
+      });
+      let imageBuffer;
+      const { instance: instancePixelsAs } = await WebAssembly.instantiateStreaming(fetch("build/pixels_as.wasm"), {
+        env: {
+          memory: memoryPixels,
+          seed: Math.random,
+        },
+      });
+      const { instance: instancePixelsCpp } = await WebAssembly.instantiateStreaming(fetch("build/pixels_cpp.wasm"), {
+        env: {
+          memory: memoryPixels,
+          seed: Math.random,
+        },
+      });
+
+      if (instancePixelsCpp.exports.__wasm_call_ctors) {
+        instancePixelsCpp.exports.__wasm_call_ctors();
+      }
+
+      const memoryParticles = new WebAssembly.Memory({ initial: 10 });
+      const { instance: instanceParticles } = await WebAssembly.instantiateStreaming(fetch("build/particles.wasm"), {
+        env: {
+          memory: memoryParticles,
+        },
+      });
+
+      const tableDispatcher = new WebAssembly.Table({
+        initial: 3,
+        maximum: 3,
+        element: "anyfunc",
+      });
+      const dispatchGagner = function () {
+        alert("Score > 100");
+      };
+      const dispatchPerdre = function () {
+        alert("Score < 0");
+      };
+      const dispatchNull = function () {
+        alert("Score = 0");
+      };
+
+      const { instance: instanceDispatcher } = await WebAssembly.instantiateStreaming(fetch("build/dispatch_event.wasm"), {
+        env: {
+          dispatcher: tableDispatcher,
+        },
+      });
+      // tableDispatcher.set(0, dispatchGagner);
+      // tableDispatcher.set(1, dispatchPerdre);
+      // tableDispatcher.set(2, dispatchNull);
+
+      const { instance: instanceCallback } = await WebAssembly.instantiateStreaming(fetch("build/callback.wasm"), {
+        env: {
+          long_press: (percent) => {
+            console.log(`Long press: ${percent}%`);
+          },
+        },
+      });
+
+      const simulatorBille = {
+        results: [],
+        reset: () => {
+          simulatorBille.results = [];
+        },
+        update: (x, y) => {
+          simulatorBille.results.push({ x, y });
+        },
+      };
+      const { instance: instanceBille } = await WebAssembly.instantiateStreaming(fetch("build/bille.wasm"), {
+        env: {
+          animer_bille: (x, y) => {
+            simulatorBille.update(x, y);
+          },
+        },
+      });
+
+      const { add } = instance.exports;
+      const { pow } = instancePower.exports;
+      const { is_premier } = instanceIsPremier.exports;
+      const { fibo } = instanceFibo.exports;
+      const { cesar } = instanceCesar.exports;
+      const { generate_pixels: generate_pixels_as } = instancePixelsAs.exports;
+      const { generate_pixels: generate_pixels_cpp } = instancePixelsCpp.exports;
+      const { simulate_particles } = instanceParticles.exports;
+      const { analyser_score } = instanceDispatcher.exports;
+      const { start_long_press } = instanceCallback.exports;
+      const { lancer_simulation } = instanceBille.exports;
+
+      const displayResult = (id, result) => {
+        document.getElementById(id).innerHTML = `Résultat : ${result}`;
+      };
+
+      document.getElementById("btn_add").onclick = () => {
+        const a = parseInt(document.getElementById("addA").value);
+        const b = parseInt(document.getElementById("addB").value);
+        displayResult("res_add", add(a, b));
+      };
+
+      document.getElementById("btn_pow").onclick = () => {
+        const a = parseInt(document.getElementById("powA").value);
+        const b = parseInt(document.getElementById("powB").value);
+        displayResult("res_pow", pow(a, b));
+      };
+
+      document.getElementById("btn_premier").onclick = () => {
+        const n = parseInt(document.getElementById("premierN").value);
+        displayResult("res_premier", is_premier(n).toString());
+      };
+
+      document.getElementById("btn_fibo").onclick = () => {
+        const n = parseInt(document.getElementById("fiboN").value);
+        displayResult("res_fibo", fibo(n));
+      };
+
+      document.getElementById("btn_cesar").onclick = () => {
+        const sentence = document.getElementById("cesarText").value;
+        const encodedSentence = new TextEncoder().encode(sentence);
+        const arrayBuffer = new Uint8Array(memoryCesar.buffer);
+        arrayBuffer.set(encodedSentence, 0);
+
+        const memorySize = cesar(encodedSentence.length);
+        const decodedSentence = new TextDecoder().decode(arrayBuffer.slice(0, memorySize));
+        displayResult("res_cesar", decodedSentence);
+      };
+
+      function generate_pixels_js(w, h) {
+        for (let i = 0; i < w * h * 4; i++) {
+          imageBuffer[i] = Math.floor(Math.random() * 256);
+        }
+      }
+
+      let animationId = null;
+
+      document.getElementById("btn_pixels_as").addEventListener("click", () => {
+        if (animationId) {
+          cancelAnimationFrame(animationId);
+        }
+
+        width = parseInt(document.getElementById("canvas_width").value);
+        height = parseInt(document.getElementById("canvas_height").value);
+        canvas.width = width;
+        canvas.height = height;
+
+        const neededSize = width * height * 4;
+        const currentPages = memoryPixels.buffer.byteLength / 65536;
+        const neededPages = Math.ceil(neededSize / 65536);
+        if (neededPages > currentPages) {
+          memoryPixels.grow(neededPages - currentPages);
+        }
+        imageBuffer = new Uint8ClampedArray(memoryPixels.buffer, 0, neededSize);
+
+        
+        const fpsDisplay = document.getElementById("fps_display");
+        let lastTime = performance.now();
+        let frameCount = 0;
+
+        const useGenerator = document.querySelector('input[name="pixel_as_generator"]:checked').value;
+        let generator;
+        switch (useGenerator) {
+          case "JS":
+            generator = generate_pixels_js;
+            break;
+          case "AssemblyScript":
+            generator = generate_pixels_as;
+            break;
+          case "CPP":
+            generator = (...args) => generate_pixels_cpp(0, ...args);
+            break;
+          default:
+            generator = generate_pixels_js;
+        }
+        function render() {
+          const now = performance.now();
+          frameCount++;
+          if (now - lastTime >= 1000) {
+            fpsDisplay.innerText = `FPS: ${frameCount}`;
+            frameCount = 0;
+            lastTime = now;
+          }
+
+          generator(width, height);
+          const imageData = new ImageData(imageBuffer, width, height);
+          ctx.putImageData(imageData, 0, 0);
+          animationId = requestAnimationFrame(render);
+        }
+        render();
+      });
+
+      document.getElementById("btn_particles").addEventListener("click", () => {
+        const numberParticles = parseInt(document.getElementById("number_particles").value);
+        const numberSteps = parseInt(document.getElementById("number_steps").value);
+
+        let particlesBuffer = new Float32Array(memoryParticles.buffer, 0, numberParticles);
+        for (let i = 0; i < numberParticles; i++) {
+          particlesBuffer[i] = Math.random() * 400;
+        }
+
+        const ul = document.getElementById("particules-results");
+        ul.innerHTML = "";
+
+        for (let i = 0; i < numberSteps; i++) {
+          simulate_particles(0, numberParticles, 20);
+          const text = `Step ${i + 1} of ${numberSteps} : ` + particlesBuffer.slice(0, numberParticles).join(", ");
+
+          const li = document.createElement("li");
+          li.innerText = text;
+          ul.appendChild(li);
+        }
+      });
+
+      document.getElementById("btn_dispatcher").addEventListener("click", () => {
+        const score = parseInt(document.getElementById("score").value);
+        analyser_score(score);
+      });
+
+      document.getElementById("btn_callback").addEventListener("click", () => {
+        start_long_press();
+      });
+
+      document.getElementById("btn_bille").addEventListener("click", () => {
+        simulatorBille.reset();
+        lancer_simulation(0, 0, 10000);
+        const bille = document.getElementById("bille");
+        bille.style.display = "block";
+        bille.style.left = "0px";
+        bille.style.top = "0px";
+        bille.style.transition = "all 0.1s linear";
+        const intervalId = setInterval(() => {
+          const result = simulatorBille.results.shift();
+          if (!result) clearInterval(intervalId);
+          bille.style.left = result.x + "px";
+          bille.style.top = result.y + "px";
+        }, 100);
+      });
+
+      //     <script type="module">
+      //       const { instance } = await WebAssembly.instantiateStreaming(fetch("build/add.wasm"));
+
+      //       const { instance: instancePower } = await WebAssembly.instantiateStreaming(fetch("build/power.wasm"));
+      //       const { instance: instanceFibo } = await WebAssembly.instantiateStreaming(fetch("build/fibonacci.wasm"));
+
+      //       const { square, pow } = instance.exports;
+      //       const { power } = instancePower.exports;
+      //       const { fibo } = instanceFibo.exports;
+
+      //       const a = 3;
+      //       const b = 3;
+      //       const c = 5;
+      //       const d = 10;
+      //       const result = square(a);
+      //       const result2 = pow(a, b);
+      //       const result3 = power(a, c);
+      //       const result4 = fibo(d);
+
+      //       document.write(`Result of ${a}² = ${result}<br/>`);
+      //       document.write(`Result of ${a} * ${b} = ${result2}<br/>`);
+      //       document.write(`Result of ${a}^${c} = ${result3}<br/>`);
+      //       document.write(`Fibonacci(${d}) = ${result4}<br/>`);
+      // >>>>>>> 20c4a44 (dernière modif)
+    </script>
+  </head>
+  <body>
+    <h1>Super module : WebAssembly</h1>
+    <h2>Séance 1</h2>
+
+    <section>
+      <h3>Démo Add</h3>
+      <input type="number" id="addA" value="3" />
+      <input type="number" id="addB" value="4" />
+      <button id="btn_add">Additionner</button>
+      <div id="res_add"></div>
+    </section>
+
+    <section>
+      <h3>Exo Power</h3>
+      <input type="number" id="powA" value="3" />
+      <input type="number" id="powB" value="4" />
+      <button id="btn_pow">Calculer Puissance</button>
+      <div id="res_pow"></div>
+    </section>
+
+    <section>
+      <h3>Démo Is Premier</h3>
+      <input type="number" id="premierN" value="11" />
+      <button id="btn_premier">Vérifier si premier</button>
+      <div id="res_premier"></div>
+    </section>
+
+    <section>
+      <h3>Exo Fibo</h3>
+      <input type="number" id="fiboN" value="10" />
+      <button id="btn_fibo">Calculer Fibo</button>
+      <div id="res_fibo"></div>
+    </section>
+
+    <h2>Séance 2</h2>
+    <section>
+      <h3>Exo Cesar</h3>
+      <input type="text" id="cesarText" value="Je suis super content j adore le webassembly" />
+      <button id="btn_cesar">Encoder via Cesar</button>
+      <div id="res_cesar"></div>
+    </section>
+    <section>
+      <h3>Pluie de pixels</h3>
+      <label>Largeur: <input type="number" id="canvas_width" value="400" step="10" /></label>
+      <label>Hauteur: <input type="number" id="canvas_height" value="300" step="10" /></label>
+      <br />
+      <label>Js <input type="radio" name="pixel_as_generator" value="JS" /> </label>
+      <label
+        >AssemblyScript
+        <input type="radio" name="pixel_as_generator" value="AssemblyScript" />
+      </label>
+      <label
+        >C++
+        <input type="radio" name="pixel_as_generator" value="CPP" />
+      </label>
+      <button type="button" id="btn_pixels_as">Lancer la pluie de pixels</button>
+      <div id="fps_display" style="font-weight: bold; margin-top: 5px">FPS: 0</div>
+      <br />
+      <canvas id="canvas_pixels_as" width="400" height="300" style="border: 1px solid black; margin-top: 10px"></canvas>
+    </section>
+    <h2>Séance 3</h2>
+    <section>
+      <h3>Demo particules</h3>
+      <label>Nombre de particules: <input id="number_particles" type="number" value="5" /></label>
+      <label>Nombre d'étapes: <input id="number_steps" type="number" value="15" /></label>
+      <button id="btn_particles">Lancer la simulation</button><br />
+      <ul id="particules-results"></ul>
+    </section>
+    <section>
+      <h3>Demo dispatcher</h3>
+      <label>Score: <input id="score" type="number" value="0" /></label>
+      <button id="btn_dispatcher">Dispatcher l'événement</button>
+    </section>
+    <section>
+      <h3>Demo callback</h3>
+      <button id="btn_callback">Lancer le callback</button>
+    </section>
+    <section>
+      <h3>Demo bille</h3>
+      <button id="btn_bille">Lancer la simulation</button>
+      <div id="bille" style="width: 50px; height: 50px; background-color: red; border-radius: 50%; position: fixed; top: 0; left: 0; display: none"></div>
+    </section>
+  </body>
+</html>

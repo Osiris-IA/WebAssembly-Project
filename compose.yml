@@ -1,0 +1,49 @@
+services:
+  php:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /var/www/html
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      DB_HOST: database
+      DB_NAME: app
+      DB_USER: root
+      DB_PASSWORD: password
+    depends_on:
+      - database
+    ports:
+      - 8080:80
+    networks:
+      - app-network 
+
+  database:
+    image: mysql:8
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=app
+      # - MYSQL_USER=root
+      # - MYSQL_PASSWORD=password
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - app-network 
+
+  # Service C++ (S3-S8)
+  wasm-cpp:
+    image: emscripten/emsdk:3.1.51
+    working_dir: /app
+    platform: linux/amd64
+    volumes:
+      - ./:/app
+    command: tail -f /dev/null
+
+networks:
+  app-network:     # ← déclare le réseau
+    driver: bridge
+
+volumes:
+  db-data: {}
+
+
