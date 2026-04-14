@@ -3,6 +3,7 @@ require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/config/database.php';
 requireAuth();
 
+
 ini_set('display_errors', 0);
 
 // Vérifier que l'utilisateur est connecté

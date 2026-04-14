@@ -1,175 +1,155 @@
 <!doctype html>
-<html lang="en">
+<html lang="fr">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WasmLightroom</title>
+    <title>WasmLightroom | Pro Editor</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
     <script type="module" defer>
-      // Génère une image de pixels aléatoires et l'affiche sur le canvas
       const canvas = document.getElementById("canvas_pixels_as");
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       const fpsDisplay = document.getElementById("fps_display");
-      const memoryPixels = new WebAssembly.Memory({
-        initial: 256,
+      const memoryPixels = new WebAssembly.Memory({ initial: 256 });
+
+      const { instance: instanceFiltersCpp } = await WebAssembly.instantiateStreaming(fetch("build/filters.wasm"), {
+        env: { memory: memoryPixels },
       });
 
-      const { instance: instanceFiltersCpp } = await WebAssembly.instantiateStreaming(
-        fetch("build/filters.wasm"),
-        { env: { memory: memoryPixels } }, // plus de "seed" !
-      );
       const { filter_gray, filter_sepia, filter_invert, filter_contrast, filter_brightness, filter_zone } = instanceFiltersCpp.exports;
 
       if (instanceFiltersCpp.exports.__wasm_call_ctors) {
         instanceFiltersCpp.exports.__wasm_call_ctors();
       }
 
-      // Variables globales pour la largeur, la hauteur, le buffer d'image et l'ID de l'animation
       let width = canvas.width;
       let height = canvas.height;
       let imageBuffer;
-      let animationId;
-
-      // Fonction pour générer des pixels aléatoires dans le buffer d'image
-      function generate_pixels_js(w, h) {
-        for (let i = 0; i < w * h * 4; i++) {
-          imageBuffer[i] = Math.floor(Math.random() * 256);
-        }
-      }
-
-      // Événement de clic pour démarrer l'animation de la pluie de pixels
-      document.getElementById("btn_pixel_as").addEventListener("click", () => {
-        if (animationId) {
-          cancelAnimationFrame(animationId);
-        }
-        // Récupère les dimensions du canvas à partir des champs de saisie et redimensionne le canvas
-        width = parseInt(document.getElementById("canvas_width").value);
-        height = parseInt(document.getElementById("canvas_height").value);
-        canvas.width = width;
-        canvas.height = height;
-
-        // Alloue un buffer d'image pour stocker les pixels aléatoires
-        const neededSize = width * height * 4;
-        imageBuffer = new Uint8ClampedArray(memoryPixels.buffer, 0, neededSize);
-        // imageBuffer.set(encodedSentence, 0);
-
-        // Variables pour le comptage des frames et le calcul du FPS
-        let frameCount = 0;
-        let lastTime = performance.now();
-
-        // Fonction de rendu qui génère les pixels, met à jour le canvas et calcule le FPS
-        function render() {
-          const now = performance.now();
-          frameCount++;
-
-          // Met à jour le FPS toutes les secondes
-          if (now - lastTime >= 1000) {
-            fpsDisplay.innerText = `FPS: ${frameCount}`;
-            frameCount = 0;
-            lastTime = now;
-          }
-          // Génère les pixels aléatoires, crée un ImageData et l'affiche sur le canvas
-          generate_pixels_js(width, height);
-          const imageData = new ImageData(imageBuffer, width, height);
-          ctx.putImageData(imageData, 0, 0);
-          animationId = requestAnimationFrame(render);
-        }
-
-        render();
-      });
-
-      const image = document.getElementById("image");
-      const input = document.getElementById("image_input");
-
-      //
-      input.addEventListener("change", async (event) => {
-        // 1. Récupérer le fichier sélectionné
-        const file = event.target.files[0];
-        if (!file) {
-          return;
-        }
-        // affiche image sur le canvas
-        const url = URL.createObjectURL(file);
-        image.src = url;
-
-        // 2. Attendre que l'image soit chargée
-        image.onload = () => {
-          // 1. Adapter le canvas à l'image
-          canvas.width = image.width;
-          canvas.height = image.height;
-          // L'image est maintenant entièrement chargée en mémoire
-          ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-          URL.revokeObjectURL(url);
-
-          // Récupérer les pixels de l'image depuis le canvas
-          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-          // Vérifier si la mémoire est suffisante et l'agrandir si besoin
-          const neededPages = Math.ceil(imgData.data.length / 65536);
-          const currentPages = memoryPixels.buffer.byteLength / 65536;
-          if (neededPages > currentPages) {
-            memoryPixels.grow(neededPages - currentPages);
-          }
-
-          // Copier les pixels dans la mémoire Wasm
-          const wasmBuffer = new Uint8ClampedArray(memoryPixels.buffer, 0, imgData.data.length);
-          wasmBuffer.set(imgData.data); // Copie les pixels dans la mémoire Wasm
-        };
-        // 2. Envoyer le fichier au serveur
-        const formData = new FormData();
-        formData.append("photo", file);
-        formData.append("album_id", 1); // à remplacer par un vrai album_id plus tard
-
-        // const response = await fetch("upload.php", { method: "POST", body: formData });
-
-        const response = await fetch("upload.php", { method: "POST", body: formData });
-        const data = await response.json();
-        canvas.dataset.imageId = data.image_id; // ← stocke l'id
-      });
+      let animationId = null;
+      let currentPage = 1;
+      const filterHistory = [];
       const recipe = [];
+
+      function getMemoryBuffer(size) {
+        const currentPages = memoryPixels.buffer.byteLength / 65536;
+        const neededPages = Math.ceil(size / 65536);
+        if (neededPages > currentPages) {
+          memoryPixels.grow(neededPages - currentPages);
+        }
+        return new Uint8ClampedArray(memoryPixels.buffer, 0, size);
+      }
 
       function applyFilter(filterFn, filterName, ...args) {
         const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const wasmBuffer = new Uint8ClampedArray(memoryPixels.buffer, 0, imgData.data.length);
+        const wasmBuffer = getMemoryBuffer(imgData.data.length);
         wasmBuffer.set(imgData.data);
 
-        // Sauvegarde AVANT le filtre
         filterHistory.push(new Uint8ClampedArray(wasmBuffer));
-
-        recipe.push({ filter: filterName, args: args });
+        recipe.push({ filter: filterName, args });
 
         filterFn(0, canvas.width, canvas.height, ...args);
-        const result = new ImageData(wasmBuffer, canvas.width, canvas.height);
-        ctx.putImageData(result, 0, 0);
+        ctx.putImageData(new ImageData(wasmBuffer, canvas.width, canvas.height), 0, 0);
+      }
+
+      async function readJsonResponse(response) {
+        const text = await response.text();
+        if (!text) {
+          return null;
+        }
+
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { error: text };
+        }
       }
 
       async function loadFeed(page = 1) {
         try {
-          const response = await fetch(`feed.php?page=${page}`);
+          const response = await fetch(`feed.php?page=${page}`, {
+            headers: { Accept: "application/json" },
+          });
+
           if (!response.ok) {
             throw new Error("Erreur lors du chargement du feed");
+          }
+
+          const images = await response.json();
+          const feedDiv = document.getElementById("feed");
+
+          if (page === 1) {
+            feedDiv.innerHTML = "";
+          }
+
+          if (images.length === 0) {
+            document.getElementById("btn_next_page").style.display = "none";
             return;
           }
-          const images = await response.json();
-          console.log(images);
 
-          const feedDiv = document.getElementById("feed");
-          feedDiv.innerHTML = images
-            .map(
-              (img) => `
-        <div>
-            <img src="${img.chemin_fichier}" width="200" />
-            <p>${img.album_nom}</p>
-        </div>
-    `,
-            )
-            .join("");
+          document.getElementById("btn_next_page").style.display = "inline-flex";
+          feedDiv.insertAdjacentHTML(
+            "beforeend",
+            images
+              .map(
+                (img) => `
+                  <div class="feed-item">
+                    <img src="${img.chemin_fichier}" alt="${img.album_nom || "Image"}" />
+                    <p>${img.album_nom || "Sans album"}</p>
+                  </div>
+                `,
+              )
+              .join(""),
+          );
+
+          currentPage = page;
         } catch (error) {
           console.error("Erreur lors du chargement du feed:", error);
         }
       }
 
-      document.getElementById("btn_gray").addEventListener("click", () => applyFilter(filter_gray, "gray"));
+      const image = document.getElementById("image");
+      const input = document.getElementById("image_input");
 
+      input.addEventListener("change", async (event) => {
+        const file = event.target.files[0];
+        if (!file) {
+          return;
+        }
+
+        const url = URL.createObjectURL(file);
+        image.src = url;
+
+        image.onload = () => {
+          canvas.width = image.width;
+          canvas.height = image.height;
+          ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(url);
+
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const wasmBuffer = getMemoryBuffer(imgData.data.length);
+          wasmBuffer.set(imgData.data);
+        };
+
+        const formData = new FormData();
+        formData.append("photo", file);
+        formData.append("album_id", 1);
+
+        const response = await fetch("upload.php", {
+          method: "POST",
+          body: formData,
+          headers: { Accept: "application/json" },
+        });
+
+        const data = await readJsonResponse(response);
+        if (!response.ok) {
+          alert(data?.error || "Erreur lors du téléchargement");
+          return;
+        }
+
+        canvas.dataset.imageId = data?.image_id ?? "";
+      });
+
+      document.getElementById("btn_gray").addEventListener("click", () => applyFilter(filter_gray, "gray"));
       document.getElementById("btn_sepia").addEventListener("click", () => applyFilter(filter_sepia, "sepia"));
       document.getElementById("btn_invert").addEventListener("click", () => applyFilter(filter_invert, "invert"));
       document.getElementById("btn_contrast").addEventListener("click", () => {
@@ -183,77 +163,114 @@
 
       document.getElementById("btn_save").addEventListener("click", async () => {
         const imageId = canvas.dataset.imageId;
-        await fetch("save_recipe.php", {
+        const response = await fetch("save_recette.php", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
           body: JSON.stringify({ image_id: imageId, recette: recipe }),
         });
+
+        const data = await readJsonResponse(response);
+        if (!response.ok) {
+          alert(data?.error || "Erreur lors de l'enregistrement");
+          return;
+        }
+
         alert("Sauvegardé !");
       });
-      document.getElementById("btn_feed").addEventListener("click", () => loadFeed());
+
+      document.getElementById("btn_feed").addEventListener("click", () => loadFeed(1));
+      document.getElementById("btn_next_page").addEventListener("click", () => loadFeed(currentPage + 1));
 
       canvas.addEventListener("click", (event) => {
-        const clickX = event.offsetX;
-        const clickY = event.offsetY;
-        const radius = 50; // Rayon d'effet du filtre
+        const radius = 80; // Augmenté pour être plus visible
+        const clickX = Math.round((event.offsetX * canvas.width) / canvas.clientWidth);
+        const clickY = Math.round((event.offsetY * canvas.height) / canvas.clientHeight);
+
+        console.log(`Clic détecté: (${clickX}, ${clickY}), rayon: ${radius}, taille canvas: ${canvas.width}x${canvas.height}`);
+
         applyFilter(filter_zone, "zone", clickX, clickY, radius);
       });
 
-      const filterHistory = []; // mémoire allouer en JS
-
       document.addEventListener("keydown", (event) => {
-        if (event.metaKey || (event.ctrlKey && event.key === "z")) {
-          // récupérer la dernière sauvegarde dans history
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
           const saved = filterHistory.pop();
-
-          // la remettre dans wasmBuffer
-          if (saved) {
-            const wasmBuffer = new Uint8ClampedArray(memoryPixels.buffer, 0, saved.length);
-            wasmBuffer.set(saved);
-
-            // réafficher l'image
-            const result = new ImageData(wasmBuffer, canvas.width, canvas.height);
-            ctx.putImageData(result, 0, 0);
+          if (!saved) {
+            return;
           }
+
+          const wasmBuffer = getMemoryBuffer(saved.length);
+          wasmBuffer.set(saved);
+          ctx.putImageData(new ImageData(wasmBuffer, canvas.width, canvas.height), 0, 0);
         }
       });
+
+      loadFeed(1);
     </script>
   </head>
   <body>
-    <section>
+    <header>
       <h1>WasmLightroom</h1>
-      <div>
-        <h3>Pluie de pixels</h3>
-
-        <label>Largeur: <input type="number" id="canvas_width" value="400" step="10" /></label>
-        <label>Hauteur: <input type="number" id="canvas_height" value="300" step="10" /></label>
-
-        <input type="file" id="image_input" />
+      <div id="user-controls">
+        <button type="button" onclick="location.href = 'views/login.php'">Connexion</button>
+        <button type="button" class="btn-primary" id="btn_save">Enregistrer la recette</button>
       </div>
-      <button type="button" id="btn_pixel_as">Lancer la pluie de pixels</button>
+    </header>
 
-      <button id="btn_gray">Niveaux de gris</button>
-      <button id="btn_sepia">Sépia</button>
-      <button id="btn_invert">Inversion</button>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div>
+          <label for="image_input">Importer une image</label>
+          <input type="file" id="image_input" />
+        </div>
 
-      <label>Contraste: <input type="range" id="contrast" min="0" max="3" step="0.1" value="1" /></label>
-      <button id="btn_contrast">Appliquer contraste</button>
+        <hr />
 
-      <label>Luminosité: <input type="range" id="brightness" min="-100" max="100" value="0" /></label>
-      <button id="btn_brightness">Appliquer luminosité</button>
-      <button id="btn_save">Sauvegarder les retouches</button>
-      <button id="btn_feed">Voir le feed</button>
+        <button type="button" id="btn_feed">Actualiser le flux</button>
+      </aside>
+
+      <main class="canvas-container">
+        <div class="canvas-shell">
+          <div class="fps-badge" id="fps_display">FPS: 0</div>
+          <canvas id="canvas_pixels_as" width="400" height="300"></canvas>
+          <p class="hint">Astuce : cliquez sur l'image pour un filtre localisé | Ctrl+Z ou Cmd+Z pour annuler</p>
+        </div>
+      </main>
+
+      <aside class="sidebar sidebar-right">
+        <div>
+          <span class="panel-title">Filtres prédéfinis</span>
+          <button type="button" id="btn_gray">Niveaux de gris</button>
+          <button type="button" id="btn_sepia">Sépia</button>
+          <button type="button" id="btn_invert">Inversion</button>
+        </div>
+
+        <hr />
+
+        <div>
+          <label for="contrast">Contraste</label>
+          <input type="range" id="contrast" min="0" max="3" step="0.1" value="1" />
+          <button type="button" id="btn_contrast">Appliquer</button>
+        </div>
+
+        <div>
+          <label for="brightness">Luminosité</label>
+          <input type="range" id="brightness" min="-100" max="100" value="0" />
+          <button type="button" id="btn_brightness">Appliquer</button>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="feed-container">
+      <div class="feed-header">
+        <span>Explorateur de flux</span>
+        <button type="button" id="btn_next_page" style="padding: 8px 12px; font-size: 0.78rem">Charger plus</button>
+      </div>
       <div id="feed"></div>
+    </footer>
 
-      <img id="image" src="" alt="Votre photo" style="display: none" />
-
-      <div id="fps_display" style="font-weight: bold; margin-top: 5px">FPS: 0</div>
-
-      <label>Js <input type="radio" name="pixel_as_generator" value="JS" /> </label>
-
-      <br />
-
-      <canvas id="canvas_pixels_as" width="400" height="300" style="border: 1px solid black; margin-top: 10px"></canvas>
-    </section>
+    <img id="image" src="" alt="Votre photo" style="display: none" />
   </body>
 </html>
