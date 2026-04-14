@@ -202,6 +202,12 @@ footer hr {
   width: 100%;
 }
 
+#btn_gray,
+#btn_sepia,
+#btn_invert {
+  margin-bottom: 8px;
+}
+
 .feed-container {
   height: 214px;
   background: var(--panel-dark);
